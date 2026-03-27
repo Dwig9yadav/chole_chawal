@@ -157,7 +157,7 @@ class UploadedFile(Base):
     is_processed = Column(Boolean, default=False)
     extraction_status = Column(String(50), default="pending")  # pending, processing, completed, failed
     extracted_text = Column(Text)
-    metadata = Column(JSON)  # Additional extracted metadata
+    file_metadata = Column("metadata", JSON)  # Additional extracted metadata
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
