@@ -1,0 +1,6 @@
+
+# local env artifacts
+node_modules/
+dist/
+.env
+.env.*
