@@ -94,3 +94,4 @@ If keys are not set, VoxAI still runs with fallback behavior for demos.
 - RAG index is rebuilt on each PDF upload.
 - Embeddings and index files are stored under data/embeddings.
 - Voice recognition in frontend uses browser SpeechRecognition API.
+# chole_chawal
