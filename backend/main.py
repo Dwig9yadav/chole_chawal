@@ -32,6 +32,8 @@ async def lifespan(app: FastAPI):
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
+        # Fail fast in production-style deploys so platform health checks don't mark a broken app as live.
+        raise RuntimeError("Database initialization failed") from e
     
     yield
     
