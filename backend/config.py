@@ -1,7 +1,6 @@
 """Application configuration management"""
 import json
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
 from typing import Optional
 from functools import lru_cache
 
@@ -40,11 +39,11 @@ class Settings(BaseSettings):
     
     # File Upload
     MAX_FILE_SIZE: int = 52428800  # 50MB
-    ALLOWED_EXTENSIONS: list[str] = ["pdf", "txt", "docx", "pptx"]
+    ALLOWED_EXTENSIONS: str = "pdf,txt,docx,pptx"
     UPLOAD_DIR: str = "data/uploads"
     
     # CORS
-    ALLOWED_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
     
     # Logging
     LOG_LEVEL: str = "INFO"
@@ -54,22 +53,26 @@ class Settings(BaseSettings):
     # Analytics
     ENABLE_ANALYTICS: bool = True
 
-    @field_validator("ALLOWED_ORIGINS", "ALLOWED_EXTENSIONS", mode="before")
-    @classmethod
-    def parse_list_env(cls, value):
-        """Allow list env values as JSON arrays or comma-separated strings."""
-        if isinstance(value, list):
-            return value
-        if value is None:
+    @staticmethod
+    def _parse_csv_or_json(value: str) -> list[str]:
+        """Allow list values from JSON arrays or comma-separated strings."""
+        if not value:
             return []
-        if isinstance(value, str):
-            value = value.strip()
-            if not value:
-                return []
-            if value.startswith("["):
-                return json.loads(value)
-            return [item.strip() for item in value.split(",") if item.strip()]
-        return value
+        cleaned = value.strip()
+        if not cleaned:
+            return []
+        if cleaned.startswith("["):
+            parsed = json.loads(cleaned)
+            return [str(item).strip() for item in parsed if str(item).strip()]
+        return [item.strip() for item in cleaned.split(",") if item.strip()]
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        return self._parse_csv_or_json(self.ALLOWED_ORIGINS)
+
+    @property
+    def allowed_extensions(self) -> list[str]:
+        return self._parse_csv_or_json(self.ALLOWED_EXTENSIONS)
     
     class Config:
         env_file = ".env"
