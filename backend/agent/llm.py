@@ -1,17 +1,19 @@
 import os
+import json
+import urllib.request
 from typing import Optional
 
 
-def _openai_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+def _groq_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
+    api_key = os.getenv("VITE_GROQ_API_KEY", "").strip()
     if not api_key:
         return None
 
     try:
-        from openai import OpenAI
+        from groq import Groq
 
-        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        client = OpenAI(api_key=api_key)
+        model = "llama-3.1-70b-versatile"  # Groq's powerful general-purpose model
+        client = Groq(api_key=api_key)
         completion = client.chat.completions.create(
             model=model,
             messages=[
@@ -19,6 +21,7 @@ def _openai_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,
+            max_tokens=1024,
         )
         return completion.choices[0].message.content or ""
     except Exception:
@@ -26,13 +29,13 @@ def _openai_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
 
 
 def generate_completion(system_prompt: str, user_prompt: str) -> str:
-    response = _openai_chat(system_prompt, user_prompt)
+    response = _groq_chat(system_prompt, user_prompt)
     if response:
         return response
 
     # Offline-safe fallback for hackathon demos when API keys are absent.
     return (
-        "I can still help, but no cloud LLM key is configured. "
-        "Set OPENAI_API_KEY in backend/.env for full quality answers.\n\n"
+        "I can still help, but no Groq API key is configured. "
+        "Set VITE_GROQ_API_KEY in backend environment for full quality answers.\n\n"
         f"Your request was: {user_prompt[:350]}"
     )
