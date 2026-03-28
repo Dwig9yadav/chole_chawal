@@ -55,6 +55,8 @@ const DEFAULT_MODEL_ROUTING = {
   tts_voice: MODEL_OPTIONS.ttsVoice[0].value,
 };
 
+const DEFAULT_VOICE_MODE = 'fast-browser';
+
 function WaveBars({ active }) {
   return (
     <div className="wave-bars" aria-hidden="true">
@@ -103,6 +105,7 @@ function Message({ msg, onToggleSpeak, isSpeaking }) {
 }
 
 export default function App() {
+  const recognitionRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const micChunksRef = useRef([]);
   const micStreamRef = useRef(null);
@@ -125,6 +128,7 @@ export default function App() {
   const [quizText, setQuizText] = useState('');
   const [activeTab, setActiveTab] = useState('study');
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
+  const [voiceMode, setVoiceMode] = useState(() => localStorage.getItem('voxai_voice_mode') || DEFAULT_VOICE_MODE);
   const [modelRouting, setModelRouting] = useState(() => {
     try {
       const saved = localStorage.getItem('voxai_model_routing');
@@ -158,6 +162,7 @@ export default function App() {
 
   useEffect(() => {
     return () => {
+      try { recognitionRef.current?.stop(); } catch {}
       try {
         if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
           mediaRecorderRef.current.stop();
@@ -171,11 +176,21 @@ export default function App() {
     localStorage.setItem('voxai_model_routing', JSON.stringify(modelRouting));
   }, [modelRouting]);
 
+  useEffect(() => {
+    localStorage.setItem('voxai_voice_mode', voiceMode);
+  }, [voiceMode]);
 
-  const speechSupported = useMemo(
+  const browserSpeechSupported = useMemo(
+    () => typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
+    []
+  );
+
+  const recorderSupported = useMemo(
     () => typeof window !== 'undefined' && !!window.MediaRecorder,
     []
   );
+
+  const speechSupported = browserSpeechSupported || recorderSupported;
 
   useEffect(() => {
     if (!stickToBottom) return;
@@ -332,7 +347,7 @@ export default function App() {
   }
 
   async function startRecording() {
-    if (!speechSupported) {
+    if (!recorderSupported) {
       setError('Audio recording is not supported in this browser.');
       return;
     }
@@ -341,13 +356,22 @@ export default function App() {
     setInterimText('Listening...');
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       micStreamRef.current = stream;
       micChunksRef.current = [];
 
       const mimeCandidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
       const mimeType = mimeCandidates.find((t) => MediaRecorder.isTypeSupported(t)) || undefined;
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recorderOptions = mimeType ? { mimeType, audioBitsPerSecond: 24000 } : { audioBitsPerSecond: 24000 };
+      const recorder = new MediaRecorder(stream, recorderOptions);
       mediaRecorderRef.current = recorder;
 
       recorder.ondataavailable = (event) => {
@@ -356,6 +380,16 @@ export default function App() {
 
       recorder.onstop = async () => {
         const blob = new Blob(micChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        if (blob.size < 1200) {
+          setInterimText('');
+          setError('No voice captured. Please allow microphone access and speak a bit longer.');
+          micStreamRef.current?.getTracks().forEach((track) => track.stop());
+          micStreamRef.current = null;
+          mediaRecorderRef.current = null;
+          micChunksRef.current = [];
+          setIsRecording(false);
+          return;
+        }
         const ext = recorder.mimeType?.includes('mp4') ? 'mp4' : 'webm';
         const file = new File([blob], `voice.${ext}`, { type: blob.type || 'audio/webm' });
         setInterimText('Transcribing...');
@@ -380,7 +414,7 @@ export default function App() {
         }
       };
 
-      recorder.start(150);
+      recorder.start(200);
       setIsRecording(true);
     } catch (err) {
       setInterimText('');
@@ -396,12 +430,96 @@ export default function App() {
     setIsRecording(false);
   }
 
-  function toggleMic() {
-    if (isRecording) {
-      stopRecording();
+  function startBrowserRecognition() {
+    if (!browserSpeechSupported) {
+      setError('Fast voice mode is not supported in this browser.');
       return;
     }
-    startRecording();
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    let gotFinalTranscript = false;
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+
+    recognition.onresult = (event) => {
+      let finalTranscript = '';
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const transcript = event.results[i][0]?.transcript || '';
+        if (event.results[i].isFinal) finalTranscript += transcript;
+        else interim += transcript;
+      }
+      setInterimText(interim || 'Listening...');
+      if (finalTranscript.trim()) {
+        gotFinalTranscript = true;
+        setInterimText('');
+        runQuery(finalTranscript.trim());
+      }
+    };
+
+    recognition.onerror = () => {
+      setInterimText('');
+      setIsRecording(false);
+      setError('Fast voice recognition failed. Switch to Accurate mode if this continues.');
+    };
+
+    recognition.onend = () => {
+      // If recognition ends without final transcript, show a helpful hint.
+      if (!gotFinalTranscript) {
+        setError('No speech detected. Try speaking closer to the mic or switch to Accurate mode.');
+      }
+      setIsRecording(false);
+      setInterimText('');
+    };
+
+    recognitionRef.current = recognition;
+
+    setError('');
+    setInterimText('Listening...');
+    setIsRecording(true);
+    try {
+      recognition.start();
+    } catch {
+      setIsRecording(false);
+      setInterimText('');
+      // Automatic fallback: browser mode failed, try backend mode.
+      setVoiceMode('accurate-groq');
+      startRecording();
+    }
+  }
+
+  function stopBrowserRecognition() {
+    try {
+      recognitionRef.current?.stop();
+    } catch {}
+    setIsRecording(false);
+    setInterimText('');
+  }
+
+  function toggleMic() {
+    if (isRecording) {
+      if (voiceMode === 'fast-browser') stopBrowserRecognition();
+      else stopRecording();
+      return;
+    }
+
+    if (!speechSupported) {
+      setError('Voice input is not supported in this browser.');
+      return;
+    }
+
+    if (voiceMode === 'fast-browser') {
+      if (!browserSpeechSupported) {
+        setVoiceMode('accurate-groq');
+        startRecording();
+        return;
+      }
+      startBrowserRecognition();
+    } else {
+      startRecording();
+    }
   }
 
   function updateRouting(key, value) {
@@ -446,6 +564,24 @@ export default function App() {
           <Volume2 size={15} />
           Tap Play voice on any AI message
         </div>
+
+        <label className="voice-mode-wrap">
+          <span>Voice latency mode</span>
+          <select
+            className="voice-mode-select"
+            value={voiceMode}
+            onChange={(e) => {
+              if (isRecording) {
+                if (voiceMode === 'fast-browser') stopBrowserRecognition();
+                else stopRecording();
+              }
+              setVoiceMode(e.target.value);
+            }}
+          >
+            <option value="fast-browser">Fast (browser STT)</option>
+            <option value="accurate-groq">Accurate (Groq STT model)</option>
+          </select>
+        </label>
 
         <div className="tab-wrap">
           <button

@@ -146,6 +146,30 @@ input {
   gap: 8px;
 }
 
+.voice-mode-wrap {
+  display: grid;
+  gap: 5px;
+}
+
+.voice-mode-wrap span {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.voice-mode-select {
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(7, 26, 34, 0.88);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 0.78rem;
+}
+
+.voice-mode-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .hint-card {
   margin-top: auto;
   border: 1px solid var(--line);

@@ -18,8 +18,8 @@ def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.webm", mod
     fallback_models = [selected_model, "whisper-large-v3-turbo", "whisper-large-v3"]
     deduped_models = []
     for m in fallback_models:
-                if m and m not in deduped_models:
-                        deduped_models.append(m)
+        if m and m not in deduped_models:
+            deduped_models.append(m)
 
     try:
         from groq import Groq
