@@ -41,6 +41,7 @@ function Message({ msg }) {
 export default function App() {
   const recognitionRef = useRef(null);
   const chatListRef = useRef(null);
+  const dragStateRef = useRef({ active: false, lastY: 0 });
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
@@ -75,6 +76,28 @@ export default function App() {
     if (!el) return;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     setStickToBottom(distFromBottom < 120);
+  }
+
+  function onChatMouseDown(e) {
+    if (e.button !== 0) return;
+    const el = chatListRef.current;
+    if (!el) return;
+    dragStateRef.current = { active: true, lastY: e.clientY };
+    el.classList.add('dragging');
+  }
+
+  function onChatMouseMove(e) {
+    const el = chatListRef.current;
+    if (!el || !dragStateRef.current.active) return;
+    const deltaY = e.clientY - dragStateRef.current.lastY;
+    dragStateRef.current.lastY = e.clientY;
+    el.scrollTop -= deltaY;
+  }
+
+  function onChatMouseUp() {
+    const el = chatListRef.current;
+    dragStateRef.current.active = false;
+    if (el) el.classList.remove('dragging');
   }
 
   function pushMessage(message) {
@@ -290,7 +313,15 @@ export default function App() {
 
         {activeTab === 'study' ? (
           <section className="chat-pane">
-            <div className="chat-list" ref={chatListRef} onScroll={handleChatScroll}>
+            <div
+              className="chat-list"
+              ref={chatListRef}
+              onScroll={handleChatScroll}
+              onMouseDown={onChatMouseDown}
+              onMouseMove={onChatMouseMove}
+              onMouseUp={onChatMouseUp}
+              onMouseLeave={onChatMouseUp}
+            >
               {messages.map((msg, idx) => (
                 <Message key={`${msg.role}-${idx}`} msg={msg} />
               ))}
