@@ -8,6 +8,9 @@ logger = logging.getLogger(__name__)
 
 def _groq_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
     api_key = os.getenv("VITE_GROQ_API_KEY", "").strip()
+    logger.info(f"DEBUG: Checking for VITE_GROQ_API_KEY: {'SET' if api_key else 'NOT SET'}")
+    if api_key:
+        logger.info(f"DEBUG: API key starts with: {api_key[:10]}...")
     if not api_key:
         logger.warning("VITE_GROQ_API_KEY not set in environment")
         return None
