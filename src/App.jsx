@@ -40,6 +40,7 @@ function Message({ msg }) {
 
 export default function App() {
   const recognitionRef = useRef(null);
+  const chatListRef = useRef(null);
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
@@ -56,6 +57,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('study');
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [error, setError] = useState('');
+  const [stickToBottom, setStickToBottom] = useState(true);
   const chatEndRef = useRef(null);
 
   const speechSupported = useMemo(
@@ -64,8 +66,16 @@ export default function App() {
   );
 
   useEffect(() => {
+    if (!stickToBottom) return;
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+  }, [messages, loading, interimText, stickToBottom]);
+
+  function handleChatScroll() {
+    const el = chatListRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setStickToBottom(distFromBottom < 120);
+  }
 
   function pushMessage(message) {
     setMessages((prev) => [...prev, message]);
@@ -92,6 +102,7 @@ export default function App() {
 
     setError('');
     setQuery('');
+    setStickToBottom(true);
     pushMessage({ role: 'user', content: question });
     setLoading(true);
 
@@ -279,7 +290,7 @@ export default function App() {
 
         {activeTab === 'study' ? (
           <section className="chat-pane">
-            <div className="chat-list">
+            <div className="chat-list" ref={chatListRef} onScroll={handleChatScroll}>
               {messages.map((msg, idx) => (
                 <Message key={`${msg.role}-${idx}`} msg={msg} />
               ))}
