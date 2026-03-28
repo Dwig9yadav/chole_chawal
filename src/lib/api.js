@@ -1,4 +1,17 @@
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
+const RENDER_BACKEND_FALLBACK = "https://voxai-backend-w30b.onrender.com";
+
+const API_BASE_CANDIDATES = [
+  import.meta.env.VITE_API_BASE_URL,
+  import.meta.env.VITE_API_URL,
+  typeof window !== "undefined" && window.location.hostname.endsWith(".onrender.com")
+    ? RENDER_BACKEND_FALLBACK
+    : null,
+  "http://localhost:8000",
+]
+  .filter(Boolean)
+  .map((base) => base.replace(/\/$/, ""));
+
+const API_BASE = API_BASE_CANDIDATES[0];
 const API_PREFIXES = ["/api/v1", "/api/v1/api", "/api"];
 
 async function parseJsonResponse(response) {
@@ -14,16 +27,18 @@ async function fetchWithPrefixFallback(path, options = {}) {
   let lastResponse = null;
   let lastError = null;
 
-  for (const prefix of API_PREFIXES) {
-    try {
-      const response = await fetch(`${API_BASE}${prefix}${path}`, options);
-      if (response.status === 404) {
-        lastResponse = response;
-        continue;
+  for (const base of API_BASE_CANDIDATES) {
+    for (const prefix of API_PREFIXES) {
+      try {
+        const response = await fetch(`${base}${prefix}${path}`, options);
+        if (response.status === 404) {
+          lastResponse = response;
+          continue;
+        }
+        return response;
+      } catch (error) {
+        lastError = error;
       }
-      return response;
-    } catch (error) {
-      lastError = error;
     }
   }
 
