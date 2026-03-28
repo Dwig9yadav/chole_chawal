@@ -6,8 +6,8 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm ci --omit=optional
+# Install dependencies (Rollup native binary is an optional dependency on alpine)
+RUN npm ci --include=optional
 
 # Copy source code
 COPY . .
