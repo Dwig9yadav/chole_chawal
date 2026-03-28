@@ -56,6 +56,7 @@ const DEFAULT_MODEL_ROUTING = {
 };
 
 const DEFAULT_VOICE_MODE = 'fast-browser';
+const DEFAULT_VOICE_RESPONSE_MODE = 'fast-browser-tts';
 
 function WaveBars({ active }) {
   return (
@@ -111,7 +112,8 @@ export default function App() {
   const micStreamRef = useRef(null);
   const chatListRef = useRef(null);
   const dragStateRef = useRef({ active: false, lastY: 0 });
-  const activeAudioRef = useRef({ audio: null, url: null, utterance: null });
+  const activeAudioRef = useRef({ audio: null, url: null, utterance: null, cached: false });
+  const ttsCacheRef = useRef(new Map());
   const [messages, setMessages] = useState([
     {
       id: Date.now(),
@@ -129,6 +131,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('study');
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
   const [voiceMode, setVoiceMode] = useState(() => localStorage.getItem('voxai_voice_mode') || DEFAULT_VOICE_MODE);
+  const [voiceResponseMode, setVoiceResponseMode] = useState(
+    () => localStorage.getItem('voxai_voice_response_mode') || DEFAULT_VOICE_RESPONSE_MODE
+  );
   const [modelRouting, setModelRouting] = useState(() => {
     try {
       const saved = localStorage.getItem('voxai_model_routing');
@@ -148,11 +153,11 @@ export default function App() {
       active.audio.onended = null;
       active.audio.onerror = null;
     }
-    if (active.url) URL.revokeObjectURL(active.url);
+    if (active.url && !active.cached) URL.revokeObjectURL(active.url);
     if (active.utterance) {
       window.speechSynthesis?.cancel();
     }
-    activeAudioRef.current = { audio: null, url: null, utterance: null };
+    activeAudioRef.current = { audio: null, url: null, utterance: null, cached: false };
     setSpeakingMessageId(null);
   }
 
@@ -169,6 +174,10 @@ export default function App() {
         }
       } catch {}
       micStreamRef.current?.getTracks().forEach((track) => track.stop());
+      ttsCacheRef.current.forEach((url) => {
+        try { URL.revokeObjectURL(url); } catch {}
+      });
+      ttsCacheRef.current.clear();
     };
   }, []);
 
@@ -179,6 +188,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('voxai_voice_mode', voiceMode);
   }, [voiceMode]);
+
+  useEffect(() => {
+    localStorage.setItem('voxai_voice_response_mode', voiceResponseMode);
+  }, [voiceResponseMode]);
 
   const browserSpeechSupported = useMemo(
     () => typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
@@ -230,39 +243,98 @@ export default function App() {
     setMessages((prev) => [...prev, { id: message.id || Date.now() + Math.random(), ...message }]);
   }
 
-  async function speakAnswer(text, messageId) {
-    stopCurrentSpeech();
-    setSpeakingMessageId(messageId);
+  function getTtsCacheKey(text) {
+    return `${modelRouting.tts_model}|${modelRouting.tts_voice}|${text.slice(0, 700)}`;
+  }
+
+  async function warmTtsForMessage(text) {
+    const clean = (text || '').trim();
+    if (!clean || voiceResponseMode !== 'natural-groq-tts') return;
+
+    const key = getTtsCacheKey(clean);
+    if (ttsCacheRef.current.has(key)) return;
 
     try {
-      const audioBlob = await getTtsAudio(text, {
+      const audioBlob = await getTtsAudio(clean, {
         model: modelRouting.tts_model,
         voice: modelRouting.tts_voice,
       });
       const url = URL.createObjectURL(audioBlob);
+      ttsCacheRef.current.set(key, url);
+
+      while (ttsCacheRef.current.size > 8) {
+        const oldestKey = ttsCacheRef.current.keys().next().value;
+        const oldestUrl = ttsCacheRef.current.get(oldestKey);
+        try { URL.revokeObjectURL(oldestUrl); } catch {}
+        ttsCacheRef.current.delete(oldestKey);
+      }
+    } catch {
+      // Silent: prefetch best-effort only.
+    }
+  }
+
+  async function speakAnswer(text, messageId) {
+    stopCurrentSpeech();
+    setSpeakingMessageId(messageId);
+
+    const clean = (text || '').trim();
+    if (!clean) {
+      setSpeakingMessageId(null);
+      return;
+    }
+
+    if (voiceResponseMode === 'fast-browser-tts' && 'speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(clean.slice(0, 700));
+      activeAudioRef.current = { audio: null, url: null, utterance, cached: false };
+      utterance.onend = () => {
+        activeAudioRef.current = { audio: null, url: null, utterance: null, cached: false };
+        setSpeakingMessageId(null);
+      };
+      utterance.onerror = () => {
+        activeAudioRef.current = { audio: null, url: null, utterance: null, cached: false };
+        setSpeakingMessageId(null);
+      };
+      window.speechSynthesis.speak(utterance);
+      return;
+    }
+
+    try {
+      const key = getTtsCacheKey(clean);
+      let url = ttsCacheRef.current.get(key);
+      let cached = true;
+
+      if (!url) {
+        const audioBlob = await getTtsAudio(clean, {
+          model: modelRouting.tts_model,
+          voice: modelRouting.tts_voice,
+        });
+        url = URL.createObjectURL(audioBlob);
+        cached = false;
+      }
+
       const audio = new Audio(url);
-      activeAudioRef.current = { audio, url, utterance: null };
+      activeAudioRef.current = { audio, url, utterance: null, cached };
       audio.onended = () => {
-        if (activeAudioRef.current.url) URL.revokeObjectURL(activeAudioRef.current.url);
-        activeAudioRef.current = { audio: null, url: null, utterance: null };
+        if (activeAudioRef.current.url && !activeAudioRef.current.cached) URL.revokeObjectURL(activeAudioRef.current.url);
+        activeAudioRef.current = { audio: null, url: null, utterance: null, cached: false };
         setSpeakingMessageId(null);
       };
       audio.onerror = () => {
-        if (activeAudioRef.current.url) URL.revokeObjectURL(activeAudioRef.current.url);
-        activeAudioRef.current = { audio: null, url: null, utterance: null };
+        if (activeAudioRef.current.url && !activeAudioRef.current.cached) URL.revokeObjectURL(activeAudioRef.current.url);
+        activeAudioRef.current = { audio: null, url: null, utterance: null, cached: false };
         setSpeakingMessageId(null);
       };
       await audio.play();
     } catch {
       if ('speechSynthesis' in window) {
-        const utterance = new SpeechSynthesisUtterance(text.slice(0, 700));
-        activeAudioRef.current = { audio: null, url: null, utterance };
+        const utterance = new SpeechSynthesisUtterance(clean.slice(0, 700));
+        activeAudioRef.current = { audio: null, url: null, utterance, cached: false };
         utterance.onend = () => {
-          activeAudioRef.current = { audio: null, url: null, utterance: null };
+          activeAudioRef.current = { audio: null, url: null, utterance: null, cached: false };
           setSpeakingMessageId(null);
         };
         utterance.onerror = () => {
-          activeAudioRef.current = { audio: null, url: null, utterance: null };
+          activeAudioRef.current = { audio: null, url: null, utterance: null, cached: false };
           setSpeakingMessageId(null);
         };
         window.speechSynthesis.speak(utterance);
@@ -299,6 +371,7 @@ export default function App() {
         sources: data.sources || [],
       };
       pushMessage(aiMessage);
+      warmTtsForMessage(aiMessage.content);
     } catch (err) {
       setError(err.message || 'Query failed');
     } finally {
@@ -580,6 +653,18 @@ export default function App() {
           >
             <option value="fast-browser">Fast (browser STT)</option>
             <option value="accurate-groq">Accurate (Groq STT model)</option>
+          </select>
+        </label>
+
+        <label className="voice-mode-wrap">
+          <span>Voice response mode</span>
+          <select
+            className="voice-mode-select"
+            value={voiceResponseMode}
+            onChange={(e) => setVoiceResponseMode(e.target.value)}
+          >
+            <option value="fast-browser-tts">Fast (instant browser TTS)</option>
+            <option value="natural-groq-tts">Natural (Groq TTS, cached)</option>
           </select>
         </label>
 
