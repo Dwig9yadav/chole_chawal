@@ -1,12 +1,15 @@
 import os
 import json
 import urllib.request
+import logging
 from typing import Optional
 
+logger = logging.getLogger(__name__)
 
 def _groq_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
     api_key = os.getenv("VITE_GROQ_API_KEY", "").strip()
     if not api_key:
+        logger.warning("VITE_GROQ_API_KEY not set in environment")
         return None
 
     try:
@@ -24,7 +27,8 @@ def _groq_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
             max_tokens=1024,
         )
         return completion.choices[0].message.content or ""
-    except Exception:
+    except Exception as e:
+        logger.error(f"Groq API error: {e}", exc_info=True)
         return None
 
 
