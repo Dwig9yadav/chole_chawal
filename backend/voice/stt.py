@@ -4,12 +4,12 @@ from typing import Optional
 
 
 def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.webm") -> str:
-    api_key = os.getenv("VITE_GROQ_API_KEY", "").strip()
+    api_key = os.getenv("GROQ_API_KEY", "").strip() or os.getenv("VITE_GROQ_API_KEY", "").strip()
     if not audio_bytes:
         return ""
 
     if not api_key:
-        return "STT fallback: no VITE_GROQ_API_KEY configured."
+        return "STT fallback: no GROQ_API_KEY configured."
 
     suffix = ".webm"
     if "." in filename:
