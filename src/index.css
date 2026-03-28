@@ -73,6 +73,9 @@ input {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .brand-wrap {
@@ -185,8 +188,8 @@ input {
   padding: 10px;
   display: grid;
   gap: 8px;
-  max-height: 40vh;
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .model-section strong {
@@ -225,7 +228,7 @@ input {
 }
 
 .hint-card p {
-  margin: 5px 0;
+  margin-top: 0;
   font-size: 0.85rem;
   color: var(--muted);
 }
