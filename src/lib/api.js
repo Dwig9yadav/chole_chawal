@@ -46,11 +46,11 @@ async function fetchWithPrefixFallback(path, options = {}) {
   return lastResponse;
 }
 
-export async function queryAssistant(query) {
+export async function queryAssistant(query, modelRouting = null) {
   const res = await fetchWithPrefixFallback(`/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, model_routing: modelRouting || undefined }),
   });
   if (!res) throw new Error("Unable to reach backend API");
   return parseJsonResponse(res);
@@ -67,21 +67,22 @@ export async function uploadPdf(file) {
   return parseJsonResponse(res);
 }
 
-export async function createQuiz(topic) {
+export async function createQuiz(topic, modelRouting = null) {
   const res = await fetchWithPrefixFallback(`/quiz`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ topic }),
+    body: JSON.stringify({ topic, model_routing: modelRouting || undefined }),
   });
   if (!res) throw new Error("Unable to reach backend API");
   return parseJsonResponse(res);
 }
 
-export async function getTtsAudio(text) {
+export async function getTtsAudio(text, options = {}) {
+  const { model, voice } = options;
   const res = await fetchWithPrefixFallback(`/tts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, model, voice }),
   });
   if (!res) throw new Error("Unable to reach backend API");
   if (!res.ok) {

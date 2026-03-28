@@ -154,6 +154,46 @@ input {
   padding: 12px;
 }
 
+.model-section {
+  border: 1px solid var(--line);
+  background: rgba(7, 22, 29, 0.75);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.model-section strong {
+  font-family: 'Sora', sans-serif;
+  font-size: 0.82rem;
+}
+
+.model-select-wrap {
+  display: grid;
+  gap: 5px;
+}
+
+.model-select-wrap span {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.model-select {
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(7, 26, 34, 0.88);
+  color: var(--text);
+  padding: 7px 8px;
+  font-size: 0.78rem;
+}
+
+.model-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .hint-card strong {
   display: block;
   margin-bottom: 8px;
@@ -302,6 +342,31 @@ input {
 .msg-card p {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.msg-audio-btn {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  background: rgba(6, 22, 29, 0.75);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 5px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.15s ease, background 0.2s ease;
+}
+
+.msg-audio-btn:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.msg-audio-btn.active {
+  border-color: var(--accent-2);
+  background: rgba(255, 209, 102, 0.14);
 }
 
 .source-wrap {

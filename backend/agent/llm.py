@@ -14,7 +14,7 @@ def _get_groq_api_key() -> str:
     )
 
 
-def _groq_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
+def _groq_chat(system_prompt: str, user_prompt: str, model: str | None = None) -> Optional[str]:
     api_key = _get_groq_api_key()
     logger.info(f"DEBUG: Checking Groq API key: {'SET' if api_key else 'NOT SET'}")
     if api_key:
@@ -26,11 +26,20 @@ def _groq_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
     try:
         configured_model = os.getenv("GROQ_MODEL", "").strip()
         model_candidates = [
+            (model or "").strip(),
             configured_model,
+            "gpt-oss-120b",
+            "gpt-oss-20b",
+            "qwen/qwen3-32b",
+            "meta-llama/llama-4-scout-17b-16e-instruct",
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
             "mixtral-8x7b-32768",
         ]
+        deduped_models = []
+        for candidate in model_candidates:
+            if candidate and candidate not in deduped_models:
+                deduped_models.append(candidate)
 
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
@@ -38,10 +47,10 @@ def _groq_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
             "Content-Type": "application/json",
         }
 
-        for model in [m for m in model_candidates if m]:
+        for model_name in deduped_models:
             try:
                 payload = {
-                    "model": model,
+                    "model": model_name,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
@@ -53,7 +62,7 @@ def _groq_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
                 response = requests.post(url, json=payload, headers=headers, timeout=45)
                 if response.status_code >= 400:
                     body = response.text[:500]
-                    logger.warning(f"Groq model failed ({model}) status={response.status_code}: {body}")
+                    logger.warning(f"Groq model failed ({model_name}) status={response.status_code}: {body}")
                     continue
 
                 data = response.json()
@@ -61,7 +70,7 @@ def _groq_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
                 if text:
                     return text
             except Exception as model_error:
-                logger.warning(f"Groq model failed ({model}): {model_error}")
+                logger.warning(f"Groq model failed ({model_name}): {model_error}")
 
         return None
     except Exception as e:
@@ -69,8 +78,8 @@ def _groq_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
         return None
 
 
-def generate_completion(system_prompt: str, user_prompt: str) -> str:
-    response = _groq_chat(system_prompt, user_prompt)
+def generate_completion(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
+    response = _groq_chat(system_prompt, user_prompt, model=model)
     if response:
         return response
 

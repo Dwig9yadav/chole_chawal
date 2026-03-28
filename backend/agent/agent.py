@@ -17,7 +17,18 @@ def _format_docs(docs: List[Dict]) -> str:
     return "\n".join(lines)
 
 
-def run_agent(query: str, docs: List[Dict]) -> Dict:
+def _pick_text_model(model_routing) -> str | None:
+    if not model_routing:
+        return None
+    return (
+        model_routing.reasoning_model
+        or model_routing.text_model
+        or model_routing.multilingual_model
+        or model_routing.tool_model
+    )
+
+
+def run_agent(query: str, docs: List[Dict], model_routing=None) -> Dict:
     q_lower = query.lower()
     tool_calls: List[Dict] = []
     tool_context = ""
@@ -54,17 +65,26 @@ def run_agent(query: str, docs: List[Dict]) -> Dict:
         "Answer in a student-friendly way with short bullet points when useful."
     )
 
-    answer = generate_completion(system_prompt, user_prompt)
+    selected_model = _pick_text_model(model_routing)
+    answer = generate_completion(system_prompt, user_prompt, model=selected_model)
     sources = [{"source": d.get("source"), "page": d.get("page")} for d in docs]
 
     return {
         "answer": answer,
         "sources": sources,
         "tool_calls": tool_calls,
+        "models": {
+            "selected_text_model": selected_model,
+            "tool_model": getattr(model_routing, "tool_model", None),
+            "vision_model": getattr(model_routing, "vision_model", None),
+            "stt_model": getattr(model_routing, "stt_model", None),
+            "tts_model": getattr(model_routing, "tts_model", None),
+            "tts_voice": getattr(model_routing, "tts_voice", None),
+        },
     }
 
 
-def generate_quiz(topic: str, docs: List[Dict]) -> Dict:
+def generate_quiz(topic: str, docs: List[Dict], model_routing=None) -> Dict:
     context = _format_docs(docs)
     system_prompt = "You are a quiz generator for college students."
     user_prompt = (
@@ -72,5 +92,11 @@ def generate_quiz(topic: str, docs: List[Dict]) -> Dict:
         f"Context: {context}\n"
         "Create exactly 5 short quiz questions with concise answer key."
     )
-    quiz_text = generate_completion(system_prompt, user_prompt)
-    return {"quiz": quiz_text}
+    selected_model = _pick_text_model(model_routing)
+    quiz_text = generate_completion(system_prompt, user_prompt, model=selected_model)
+    return {
+        "quiz": quiz_text,
+        "models": {
+            "selected_text_model": selected_model,
+        },
+    }

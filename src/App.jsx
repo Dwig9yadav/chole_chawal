@@ -1,6 +1,60 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpenCheck, Mic, MicOff, SendHorizontal, Upload, Volume2, BrainCircuit, FileText } from 'lucide-react';
+import { BookOpenCheck, Mic, MicOff, SendHorizontal, Upload, Volume2, VolumeX, BrainCircuit, FileText } from 'lucide-react';
 import { createQuiz, getTtsAudio, queryAssistant, uploadPdf } from './lib/api.js';
+
+const MODEL_OPTIONS = {
+  reasoning: [
+    { label: 'GPT OSS 120B', value: 'gpt-oss-120b' },
+    { label: 'GPT OSS 20B', value: 'gpt-oss-20b' },
+    { label: 'Qwen 3 32B', value: 'qwen/qwen3-32b' },
+  ],
+  tool: [
+    { label: 'GPT OSS 120B', value: 'gpt-oss-120b' },
+    { label: 'GPT OSS 20B', value: 'gpt-oss-20b' },
+    { label: 'Llama 4 Scout', value: 'meta-llama/llama-4-scout-17b-16e-instruct' },
+    { label: 'Qwen 3 32B', value: 'qwen/qwen3-32b' },
+  ],
+  text: [
+    { label: 'GPT OSS 120B', value: 'gpt-oss-120b' },
+    { label: 'GPT OSS 20B', value: 'gpt-oss-20b' },
+    { label: 'Llama 4 Scout', value: 'meta-llama/llama-4-scout-17b-16e-instruct' },
+    { label: 'Llama 3.3 70B', value: 'llama-3.3-70b-versatile' },
+  ],
+  vision: [
+    { label: 'Llama 4 Scout', value: 'meta-llama/llama-4-scout-17b-16e-instruct' },
+  ],
+  multilingual: [
+    { label: 'GPT OSS 120B', value: 'gpt-oss-120b' },
+    { label: 'GPT OSS 20B', value: 'gpt-oss-20b' },
+    { label: 'Llama 4 Scout', value: 'meta-llama/llama-4-scout-17b-16e-instruct' },
+    { label: 'Llama 3.3 70B', value: 'llama-3.3-70b-versatile' },
+    { label: 'Whisper Large v3', value: 'whisper-large-v3' },
+  ],
+  stt: [
+    { label: 'Whisper Large v3', value: 'whisper-large-v3' },
+    { label: 'Whisper Large v3 Turbo', value: 'whisper-large-v3-turbo' },
+  ],
+  tts: [
+    { label: 'Orpheus English', value: 'playai-tts' },
+    { label: 'Orpheus Arabic Saudi', value: 'playai-tts-arabic' },
+  ],
+  ttsVoice: [
+    { label: 'Arista PlayAI', value: 'Arista-PlayAI' },
+    { label: 'Atlas PlayAI', value: 'Atlas-PlayAI' },
+    { label: 'Celeste PlayAI', value: 'Celeste-PlayAI' },
+  ],
+};
+
+const DEFAULT_MODEL_ROUTING = {
+  reasoning_model: MODEL_OPTIONS.reasoning[0].value,
+  tool_model: MODEL_OPTIONS.tool[0].value,
+  text_model: MODEL_OPTIONS.text[2].value,
+  vision_model: MODEL_OPTIONS.vision[0].value,
+  multilingual_model: MODEL_OPTIONS.multilingual[2].value,
+  stt_model: MODEL_OPTIONS.stt[1].value,
+  tts_model: MODEL_OPTIONS.tts[0].value,
+  tts_voice: MODEL_OPTIONS.ttsVoice[0].value,
+};
 
 function WaveBars({ active }) {
   return (
@@ -16,13 +70,24 @@ function WaveBars({ active }) {
   );
 }
 
-function Message({ msg }) {
+function Message({ msg, onToggleSpeak, isSpeaking }) {
   const isUser = msg.role === 'user';
   return (
     <div className={isUser ? 'msg-row user' : 'msg-row'}>
       <div className={isUser ? 'msg-avatar user' : 'msg-avatar ai'}>{isUser ? 'You' : 'AI'}</div>
       <div className={isUser ? 'msg-card user' : 'msg-card ai'}>
         <p>{msg.content}</p>
+        {!isUser && (
+          <button
+            type="button"
+            onClick={() => onToggleSpeak(msg)}
+            className={isSpeaking ? 'msg-audio-btn active' : 'msg-audio-btn'}
+            title={isSpeaking ? 'Stop playback' : 'Play this answer'}
+          >
+            {isSpeaking ? <VolumeX size={14} /> : <Volume2 size={14} />}
+            {isSpeaking ? 'Stop voice' : 'Play voice'}
+          </button>
+        )}
         {msg.sources?.length > 0 && (
           <div className="source-wrap">
             <div className="source-title">Sources</div>
@@ -42,8 +107,10 @@ export default function App() {
   const recognitionRef = useRef(null);
   const chatListRef = useRef(null);
   const dragStateRef = useRef({ active: false, lastY: 0 });
+  const activeAudioRef = useRef({ audio: null, url: null, utterance: null });
   const [messages, setMessages] = useState([
     {
+      id: Date.now(),
       role: 'assistant',
       content:
         'Welcome to VoxAI. Upload your study PDF, ask questions with text or voice, and use quiz mode to test your understanding.',
@@ -56,10 +123,42 @@ export default function App() {
   const [interimText, setInterimText] = useState('');
   const [quizText, setQuizText] = useState('');
   const [activeTab, setActiveTab] = useState('study');
-  const [autoSpeak, setAutoSpeak] = useState(true);
+  const [speakingMessageId, setSpeakingMessageId] = useState(null);
+  const [modelRouting, setModelRouting] = useState(() => {
+    try {
+      const saved = localStorage.getItem('voxai_model_routing');
+      return saved ? { ...DEFAULT_MODEL_ROUTING, ...JSON.parse(saved) } : DEFAULT_MODEL_ROUTING;
+    } catch {
+      return DEFAULT_MODEL_ROUTING;
+    }
+  });
   const [error, setError] = useState('');
   const [stickToBottom, setStickToBottom] = useState(true);
   const chatEndRef = useRef(null);
+  function stopCurrentSpeech() {
+    const active = activeAudioRef.current;
+    if (active.audio) {
+      active.audio.pause();
+      active.audio.currentTime = 0;
+      active.audio.onended = null;
+      active.audio.onerror = null;
+    }
+    if (active.url) URL.revokeObjectURL(active.url);
+    if (active.utterance) {
+      window.speechSynthesis?.cancel();
+    }
+    activeAudioRef.current = { audio: null, url: null, utterance: null };
+    setSpeakingMessageId(null);
+  }
+
+  useEffect(() => {
+    return () => stopCurrentSpeech();
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('voxai_model_routing', JSON.stringify(modelRouting));
+  }, [modelRouting]);
+
 
   const speechSupported = useMemo(
     () => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
@@ -101,22 +200,58 @@ export default function App() {
   }
 
   function pushMessage(message) {
-    setMessages((prev) => [...prev, message]);
+    setMessages((prev) => [...prev, { id: message.id || Date.now() + Math.random(), ...message }]);
   }
 
-  async function speakAnswer(text) {
+  async function speakAnswer(text, messageId) {
+    stopCurrentSpeech();
+    setSpeakingMessageId(messageId);
+
     try {
-      const audioBlob = await getTtsAudio(text);
+      const audioBlob = await getTtsAudio(text, {
+        model: modelRouting.tts_model,
+        voice: modelRouting.tts_voice,
+      });
       const url = URL.createObjectURL(audioBlob);
       const audio = new Audio(url);
-      audio.onended = () => URL.revokeObjectURL(url);
+      activeAudioRef.current = { audio, url, utterance: null };
+      audio.onended = () => {
+        if (activeAudioRef.current.url) URL.revokeObjectURL(activeAudioRef.current.url);
+        activeAudioRef.current = { audio: null, url: null, utterance: null };
+        setSpeakingMessageId(null);
+      };
+      audio.onerror = () => {
+        if (activeAudioRef.current.url) URL.revokeObjectURL(activeAudioRef.current.url);
+        activeAudioRef.current = { audio: null, url: null, utterance: null };
+        setSpeakingMessageId(null);
+      };
       await audio.play();
     } catch {
       if ('speechSynthesis' in window) {
         const utterance = new SpeechSynthesisUtterance(text.slice(0, 700));
+        activeAudioRef.current = { audio: null, url: null, utterance };
+        utterance.onend = () => {
+          activeAudioRef.current = { audio: null, url: null, utterance: null };
+          setSpeakingMessageId(null);
+        };
+        utterance.onerror = () => {
+          activeAudioRef.current = { audio: null, url: null, utterance: null };
+          setSpeakingMessageId(null);
+        };
         window.speechSynthesis.speak(utterance);
+      } else {
+        setSpeakingMessageId(null);
       }
     }
+  }
+
+  async function onToggleSpeak(msg) {
+    if (!msg?.content || msg.role !== 'assistant') return;
+    if (speakingMessageId === msg.id) {
+      stopCurrentSpeech();
+      return;
+    }
+    await speakAnswer(msg.content, msg.id);
   }
 
   async function runQuery(rawQuery) {
@@ -130,17 +265,13 @@ export default function App() {
     setLoading(true);
 
     try {
-      const data = await queryAssistant(question);
+      const data = await queryAssistant(question, modelRouting);
       const aiMessage = {
         role: 'assistant',
         content: data.answer || 'No answer generated.',
         sources: data.sources || [],
       };
       pushMessage(aiMessage);
-
-      if (autoSpeak && aiMessage.content) {
-        await speakAnswer(aiMessage.content);
-      }
     } catch (err) {
       setError(err.message || 'Query failed');
     } finally {
@@ -178,7 +309,7 @@ export default function App() {
     setError('');
     setLoading(true);
     try {
-      const data = await createQuiz(topic);
+      const data = await createQuiz(topic, modelRouting);
       setQuizText(data.quiz || 'No quiz generated.');
       setActiveTab('quiz');
     } catch (err) {
@@ -245,6 +376,23 @@ export default function App() {
     recognitionRef.current?.start();
   }
 
+  function updateRouting(key, value) {
+    setModelRouting((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function ModelSelect({ label, value, options, onChange }) {
+    return (
+      <label className="model-select-wrap">
+        <span>{label}</span>
+        <select value={value} onChange={(e) => onChange(e.target.value)} className="model-select">
+          {options.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
   return (
     <div className="app-shell">
       <div className="ambient" />
@@ -266,14 +414,10 @@ export default function App() {
           <input type="file" accept="application/pdf" onChange={onUploadFile} disabled={uploading} hidden />
         </label>
 
-        <button
-          className={autoSpeak ? 'toggle-btn active' : 'toggle-btn'}
-          type="button"
-          onClick={() => setAutoSpeak((s) => !s)}
-        >
+        <div className="toggle-btn" style={{ cursor: 'default', pointerEvents: 'none', opacity: 0.95 }}>
           <Volume2 size={15} />
-          Auto voice playback: {autoSpeak ? 'On' : 'Off'}
-        </button>
+          Tap Play voice on any AI message
+        </div>
 
         <div className="tab-wrap">
           <button
@@ -292,6 +436,58 @@ export default function App() {
             <FileText size={15} />
             Quiz Mode
           </button>
+        </div>
+
+        <div className="model-section">
+          <strong>Model Routing</strong>
+          <ModelSelect
+            label="Reasoning"
+            value={modelRouting.reasoning_model}
+            options={MODEL_OPTIONS.reasoning}
+            onChange={(v) => updateRouting('reasoning_model', v)}
+          />
+          <ModelSelect
+            label="Function/Tool"
+            value={modelRouting.tool_model}
+            options={MODEL_OPTIONS.tool}
+            onChange={(v) => updateRouting('tool_model', v)}
+          />
+          <ModelSelect
+            label="Text to Text"
+            value={modelRouting.text_model}
+            options={MODEL_OPTIONS.text}
+            onChange={(v) => updateRouting('text_model', v)}
+          />
+          <ModelSelect
+            label="Vision"
+            value={modelRouting.vision_model}
+            options={MODEL_OPTIONS.vision}
+            onChange={(v) => updateRouting('vision_model', v)}
+          />
+          <ModelSelect
+            label="Multilingual"
+            value={modelRouting.multilingual_model}
+            options={MODEL_OPTIONS.multilingual}
+            onChange={(v) => updateRouting('multilingual_model', v)}
+          />
+          <ModelSelect
+            label="Speech to Text"
+            value={modelRouting.stt_model}
+            options={MODEL_OPTIONS.stt}
+            onChange={(v) => updateRouting('stt_model', v)}
+          />
+          <ModelSelect
+            label="Text to Speech"
+            value={modelRouting.tts_model}
+            options={MODEL_OPTIONS.tts}
+            onChange={(v) => updateRouting('tts_model', v)}
+          />
+          <ModelSelect
+            label="TTS Voice"
+            value={modelRouting.tts_voice}
+            options={MODEL_OPTIONS.ttsVoice}
+            onChange={(v) => updateRouting('tts_voice', v)}
+          />
         </div>
 
         <div className="hint-card">
@@ -323,7 +519,7 @@ export default function App() {
               onMouseLeave={onChatMouseUp}
             >
               {messages.map((msg, idx) => (
-                <Message key={`${msg.role}-${idx}`} msg={msg} />
+                <Message key={msg.id || `${msg.role}-${idx}`} msg={msg} onToggleSpeak={onToggleSpeak} isSpeaking={speakingMessageId === msg.id} />
               ))}
               {loading && <div className="thinking">VoxAI is reasoning over your docs and tools...</div>}
               {interimText && <div className="interim">{interimText}</div>}

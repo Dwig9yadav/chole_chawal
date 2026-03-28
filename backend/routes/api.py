@@ -38,19 +38,20 @@ async def upload_pdf(file: UploadFile = File(...)):
 @router.post("/query")
 def query(payload: QueryRequest):
     docs = retrieve_docs(payload.query, k=4)
-    result = run_agent(payload.query, docs)
+    result = run_agent(payload.query, docs, payload.model_routing)
     return {
         "query": payload.query,
         "answer": result["answer"],
         "sources": result["sources"],
         "tool_calls": result["tool_calls"],
+        "models": result.get("models", {}),
     }
 
 
 @router.post("/quiz")
 def quiz(payload: QuizRequest):
     docs = retrieve_docs(payload.topic, k=6)
-    return generate_quiz(payload.topic, docs)
+    return generate_quiz(payload.topic, docs, payload.model_routing)
 
 
 @router.post("/stt")
@@ -62,7 +63,7 @@ async def stt(file: UploadFile = File(...)):
 
 @router.post("/tts")
 def tts(payload: TTSRequest):
-    audio_bytes = synthesize_speech_bytes(payload.text)
+    audio_bytes = synthesize_speech_bytes(payload.text, model=payload.model, voice=payload.voice)
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="TTS failed. Check internet or gTTS install.")
     return Response(content=audio_bytes, media_type="audio/mpeg")
