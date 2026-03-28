@@ -1,6 +1,7 @@
 import os
 import logging
 from typing import Optional
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +24,6 @@ def _groq_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
         return None
 
     try:
-        from groq import Groq
-
-        client = Groq(api_key=api_key)
-
         configured_model = os.getenv("GROQ_MODEL", "").strip()
         model_candidates = [
             configured_model,
@@ -35,18 +32,32 @@ def _groq_chat(system_prompt: str, user_prompt: str) -> Optional[str]:
             "mixtral-8x7b-32768",
         ]
 
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
         for model in [m for m in model_candidates if m]:
             try:
-                completion = client.chat.completions.create(
-                    model=model,
-                    messages=[
+                payload = {
+                    "model": model,
+                    "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=0.2,
-                    max_tokens=1024,
-                )
-                text = completion.choices[0].message.content or ""
+                    "temperature": 0.2,
+                    "max_tokens": 1024,
+                }
+
+                response = requests.post(url, json=payload, headers=headers, timeout=45)
+                if response.status_code >= 400:
+                    body = response.text[:500]
+                    logger.warning(f"Groq model failed ({model}) status={response.status_code}: {body}")
+                    continue
+
+                data = response.json()
+                text = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
                 if text:
                     return text
             except Exception as model_error:
