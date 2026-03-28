@@ -91,3 +91,16 @@ export async function getTtsAudio(text, options = {}) {
   }
   return res.blob();
 }
+
+export async function transcribeAudio(file, options = {}) {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (options.model) formData.append("model", options.model);
+
+  const res = await fetchWithPrefixFallback(`/stt`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res) throw new Error("Unable to reach backend API");
+  return parseJsonResponse(res);
+}

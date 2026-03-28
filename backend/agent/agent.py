@@ -21,10 +21,65 @@ def _pick_text_model(model_routing) -> str | None:
     if not model_routing:
         return None
     return (
-        model_routing.reasoning_model
-        or model_routing.text_model
+        model_routing.text_model
+        or model_routing.reasoning_model
         or model_routing.multilingual_model
         or model_routing.tool_model
+    )
+
+
+def _is_multilingual_query(query: str) -> bool:
+    # Any non-ASCII chars likely indicate non-English user text.
+    if any(ord(ch) > 127 for ch in query):
+        return True
+
+    lower = query.lower()
+    non_english_markers = [
+        "hola", "bonjour", "hallo", "namaste", "salam", "ciao", "ola", "privet",
+        "translate", "traduce", "traducir", "traduire", "अनुवाद", "ترجم",
+    ]
+    return any(marker in lower for marker in non_english_markers)
+
+
+def _looks_like_vision_prompt(query: str) -> bool:
+    lower = query.lower()
+    vision_markers = [
+        "image", "photo", "picture", "diagram", "screenshot", "graph", "chart", "figure",
+        "what do you see", "describe this image",
+    ]
+    return any(marker in lower for marker in vision_markers)
+
+
+def _needs_reasoning(query: str) -> bool:
+    lower = query.lower()
+    reasoning_markers = [
+        "why", "how", "compare", "tradeoff", "step by step", "prove", "analyze", "deep",
+        "architecture", "design", "plan", "debug", "optimize", "derive",
+    ]
+    return len(query) > 140 or any(marker in lower for marker in reasoning_markers)
+
+
+def _pick_response_model(query: str, model_routing, used_tools: bool) -> tuple[str | None, str]:
+    if not model_routing:
+        return None, "default"
+
+    if used_tools and model_routing.tool_model:
+        return model_routing.tool_model, "tool"
+
+    if _looks_like_vision_prompt(query) and model_routing.vision_model:
+        return model_routing.vision_model, "vision"
+
+    if _is_multilingual_query(query) and model_routing.multilingual_model:
+        return model_routing.multilingual_model, "multilingual"
+
+    if _needs_reasoning(query) and model_routing.reasoning_model:
+        return model_routing.reasoning_model, "reasoning"
+
+    return (
+        model_routing.text_model
+        or model_routing.multilingual_model
+        or model_routing.reasoning_model,
+        "text",
     )
 
 
@@ -65,7 +120,7 @@ def run_agent(query: str, docs: List[Dict], model_routing=None) -> Dict:
         "Answer in a student-friendly way with short bullet points when useful."
     )
 
-    selected_model = _pick_text_model(model_routing)
+    selected_model, selected_route = _pick_response_model(query, model_routing, used_tools=bool(tool_calls))
     answer = generate_completion(system_prompt, user_prompt, model=selected_model)
     sources = [{"source": d.get("source"), "page": d.get("page")} for d in docs]
 
@@ -74,6 +129,7 @@ def run_agent(query: str, docs: List[Dict], model_routing=None) -> Dict:
         "sources": sources,
         "tool_calls": tool_calls,
         "models": {
+            "selected_route": selected_route,
             "selected_text_model": selected_model,
             "tool_model": getattr(model_routing, "tool_model", None),
             "vision_model": getattr(model_routing, "vision_model", None),
@@ -92,11 +148,16 @@ def generate_quiz(topic: str, docs: List[Dict], model_routing=None) -> Dict:
         f"Context: {context}\n"
         "Create exactly 5 short quiz questions with concise answer key."
     )
-    selected_model = _pick_text_model(model_routing)
+    # Quiz generation favors reasoning model when available.
+    selected_model = (
+        getattr(model_routing, "reasoning_model", None)
+        or _pick_text_model(model_routing)
+    )
     quiz_text = generate_completion(system_prompt, user_prompt, model=selected_model)
     return {
         "quiz": quiz_text,
         "models": {
             "selected_text_model": selected_model,
+            "selected_route": "reasoning" if selected_model else "default",
         },
     }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpenCheck, Mic, MicOff, SendHorizontal, Upload, Volume2, VolumeX, BrainCircuit, FileText } from 'lucide-react';
-import { createQuiz, getTtsAudio, queryAssistant, uploadPdf } from './lib/api.js';
+import { createQuiz, getTtsAudio, queryAssistant, transcribeAudio, uploadPdf } from './lib/api.js';
 
 const MODEL_OPTIONS = {
   reasoning: [
@@ -28,7 +28,6 @@ const MODEL_OPTIONS = {
     { label: 'GPT OSS 20B', value: 'gpt-oss-20b' },
     { label: 'Llama 4 Scout', value: 'meta-llama/llama-4-scout-17b-16e-instruct' },
     { label: 'Llama 3.3 70B', value: 'llama-3.3-70b-versatile' },
-    { label: 'Whisper Large v3', value: 'whisper-large-v3' },
   ],
   stt: [
     { label: 'Whisper Large v3', value: 'whisper-large-v3' },
@@ -104,7 +103,9 @@ function Message({ msg, onToggleSpeak, isSpeaking }) {
 }
 
 export default function App() {
-  const recognitionRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const micChunksRef = useRef([]);
+  const micStreamRef = useRef(null);
   const chatListRef = useRef(null);
   const dragStateRef = useRef({ active: false, lastY: 0 });
   const activeAudioRef = useRef({ audio: null, url: null, utterance: null });
@@ -156,12 +157,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    return () => {
+      try {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+      } catch {}
+      micStreamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem('voxai_model_routing', JSON.stringify(modelRouting));
   }, [modelRouting]);
 
 
   const speechSupported = useMemo(
-    () => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
+    () => typeof window !== 'undefined' && !!window.MediaRecorder,
     []
   );
 
@@ -319,61 +331,77 @@ export default function App() {
     }
   }
 
-  function setupRecognitionIfNeeded() {
-    if (recognitionRef.current || !speechSupported) return;
-
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
-    recognition.interimResults = true;
-    recognition.continuous = false;
-
-    recognition.onresult = (event) => {
-      let finalTranscript = '';
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const transcript = event.results[i][0]?.transcript || '';
-        if (event.results[i].isFinal) finalTranscript += transcript;
-        else interim += transcript;
-      }
-      setInterimText(interim);
-      if (finalTranscript.trim()) {
-        setInterimText('');
-        runQuery(finalTranscript.trim());
-      }
-    };
-
-    recognition.onend = () => {
-      setIsRecording(false);
-      setInterimText('');
-    };
-
-    recognition.onerror = () => {
-      setIsRecording(false);
-      setInterimText('');
-      setError('Microphone recognition failed.');
-    };
-
-    recognitionRef.current = recognition;
-  }
-
-  function toggleMic() {
+  async function startRecording() {
     if (!speechSupported) {
-      setError('Browser speech recognition is not supported in this browser.');
-      return;
-    }
-    setupRecognitionIfNeeded();
-
-    if (isRecording) {
-      recognitionRef.current?.stop();
-      setIsRecording(false);
-      setInterimText('');
+      setError('Audio recording is not supported in this browser.');
       return;
     }
 
     setError('');
-    setIsRecording(true);
-    recognitionRef.current?.start();
+    setInterimText('Listening...');
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
+      micChunksRef.current = [];
+
+      const mimeCandidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+      const mimeType = mimeCandidates.find((t) => MediaRecorder.isTypeSupported(t)) || undefined;
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size > 0) micChunksRef.current.push(event.data);
+      };
+
+      recorder.onstop = async () => {
+        const blob = new Blob(micChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        const ext = recorder.mimeType?.includes('mp4') ? 'mp4' : 'webm';
+        const file = new File([blob], `voice.${ext}`, { type: blob.type || 'audio/webm' });
+        setInterimText('Transcribing...');
+        try {
+          const res = await transcribeAudio(file, { model: modelRouting.stt_model });
+          const text = (res.text || '').trim();
+          setInterimText('');
+          if (text) {
+            runQuery(text);
+          } else {
+            setError('No speech detected. Please try again.');
+          }
+        } catch (err) {
+          setInterimText('');
+          setError(err.message || 'Speech transcription failed.');
+        } finally {
+          micStreamRef.current?.getTracks().forEach((track) => track.stop());
+          micStreamRef.current = null;
+          mediaRecorderRef.current = null;
+          micChunksRef.current = [];
+          setIsRecording(false);
+        }
+      };
+
+      recorder.start(150);
+      setIsRecording(true);
+    } catch (err) {
+      setInterimText('');
+      setError(err.message || 'Microphone access failed.');
+      setIsRecording(false);
+    }
+  }
+
+  function stopRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder) return;
+    if (recorder.state !== 'inactive') recorder.stop();
+    setIsRecording(false);
+  }
+
+  function toggleMic() {
+    if (isRecording) {
+      stopRecording();
+      return;
+    }
+    startRecording();
   }
 
   function updateRouting(key, value) {

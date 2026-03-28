@@ -1,4 +1,4 @@
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from backend.agent.agent import generate_quiz, run_agent
@@ -55,9 +55,9 @@ def quiz(payload: QuizRequest):
 
 
 @router.post("/stt")
-async def stt(file: UploadFile = File(...)):
+async def stt(file: UploadFile = File(...), model: str | None = Form(default=None)):
     audio = await file.read()
-    text = transcribe_audio_bytes(audio, filename=file.filename)
+    text = transcribe_audio_bytes(audio, filename=file.filename, model=model)
     return {"text": text}
 
 

@@ -1,9 +1,8 @@
 import os
 import tempfile
-from typing import Optional
 
 
-def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.webm") -> str:
+def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.webm", model: str | None = None) -> str:
     api_key = os.getenv("GROQ_API_KEY", "").strip() or os.getenv("VITE_GROQ_API_KEY", "").strip()
     if not audio_bytes:
         return ""
@@ -15,6 +14,13 @@ def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.webm") -> 
     if "." in filename:
         suffix = "." + filename.rsplit(".", 1)[-1]
 
+    selected_model = (model or "").strip() or "whisper-large-v3-turbo"
+    fallback_models = [selected_model, "whisper-large-v3-turbo", "whisper-large-v3"]
+    deduped_models = []
+    for m in fallback_models:
+                if m and m not in deduped_models:
+                        deduped_models.append(m)
+
     try:
         from groq import Groq
 
@@ -23,11 +29,18 @@ def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.webm") -> 
             tmp.flush()
             client = Groq(api_key=api_key)
             with open(tmp.name, "rb") as audio_file:
-                transcript = client.audio.transcriptions.create(
-                    model="whisper-large-v3-turbo",
-                    file=audio_file,
-                )
-        text = getattr(transcript, "text", "")
-        return text or ""
+                for model_name in deduped_models:
+                    try:
+                        audio_file.seek(0)
+                        transcript = client.audio.transcriptions.create(
+                            model=model_name,
+                            file=audio_file,
+                        )
+                        text = getattr(transcript, "text", "")
+                        if text:
+                            return text
+                    except Exception:
+                        continue
+        return ""
     except Exception as exc:
         return f"STT failed: {exc}"
